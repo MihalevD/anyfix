@@ -1,268 +1,339 @@
 // AnyFix – src/app/dashboard/master/page.tsx
 'use client';
 
-import { useEffect, useState } from 'react';
-import Link from 'next/link';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/lib/store';
 import { ordersAPI, mastersAPI } from '@/lib/api';
+import { useT } from '@/lib/lang';
 import toast from 'react-hot-toast';
 
-const LEVEL_STYLES: Record<string, { label:string; color:string; bg:string }> = {
-  STAJANT:     { label:'Стажант',        color:'#6B7280', bg:'#F3F4F6' },
-  MAJSTOR:     { label:'Майстор',        color:'#1D4ED8', bg:'#EFF6FF' },
-  PRO_MAJSTOR: { label:'Про Майстор',    color:'#7C3AED', bg:'#F5F3FF' },
-  ELIT:        { label:'Елит',           color:'#92400E', bg:'#FFFBEB' },
-  CERTIFIED:   { label:'AnyFix Certified', color:'#166534', bg:'#F0FDF4' },
-};
-const VERIFY_LABELS: Record<string, { label:string; color:string }> = {
-  PENDING:              { label:'Изчаква документи',   color:'#6B7280' },
-  DOCUMENTS_SUBMITTED:  { label:'Документите получени', color:'#1D4ED8' },
-  UNDER_REVIEW:         { label:'В проверка',          color:'#92400E' },
-  INTERVIEW_SCHEDULED:  { label:'Насрочено интервю',   color:'#7C3AED' },
-  APPROVED:             { label:'✅ Одобрен',           color:'#166534' },
-  REJECTED:             { label:'❌ Отказан',           color:'#991B1B' },
+const VERIFY_STEP_KEYS = ['PENDING','DOCUMENTS_SUBMITTED','UNDER_REVIEW','INTERVIEW_SCHEDULED','APPROVED'];
+
+const LEVEL_INFO: Record<string, { label: string; color: string; next?: string }> = {
+  STAJANT:     { label:'Стажант',      color:'#6B7280', next:'10 orders + 4.0★' },
+  MAJSTOR:     { label:'Майстор',      color:'#1D4ED8', next:'30 orders + 4.3★' },
+  PRO_MAJSTOR: { label:'Про Майстор',  color:'#7C3AED', next:'75 orders + 4.6★' },
+  ELIT:        { label:'Елит',         color:'#D97706', next:'150 orders + 4.8★' },
+  CERTIFIED:   { label:'AnyFix Certified', color:'#166534', next: undefined },
 };
 
-export default function MasterDashboard() {
-  const { user } = useAuthStore();
-  const router   = useRouter();
-  const [profile, setProfile] = useState<any>(null);
-  const [orders,  setOrders]  = useState<any[]>([]);
-  const [available, setAvailable] = useState(true);
-  const [loading, setLoading] = useState(true);
+function EarningsChart({ data }: { data: { label: string; amount: number }[] }) {
+  const max = Math.max(...data.map(d => d.amount), 1);
+  return (
+    <div style={{ display:'flex', alignItems:'flex-end', gap:8, height:80 }}>
+      {data.map(d => (
+        <div key={d.label} style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:4 }}>
+          <div style={{
+            width:'100%', background:'#1E3A5F', borderRadius:'4px 4px 0 0',
+            height: `${(d.amount/max)*72}px`, minHeight: d.amount > 0 ? 4 : 2,
+            opacity: d.amount > 0 ? 1 : .2,
+          }} />
+          <span style={{ fontSize:'.65rem', color:'rgba(255,255,255,.5)' }}>{d.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
-  useEffect(() => {
-    if (!user) return;
-    if (user.role !== 'MASTER') { router.push('/dashboard/client'); return; }
-    loadData();
-  }, [user]);
+function OfferModal({ order, onClose, onSent }: { order: any; onClose: () => void; onSent: () => void }) {
+  const { t } = useT();
+  const m = t.masterDash.offerModal;
+  const [form, setForm] = useState({ price:'', description:'', estimatedHours:'' });
+  const [loading, setLoading] = useState(false);
 
-  async function loadData() {
+  const submit = async () => {
+    if (!form.price || !form.description) return toast.error(m.fillFields);
     setLoading(true);
     try {
-      const [profileRes, ordersRes] = await Promise.all([
-        mastersAPI.get('me' as any),
-        ordersAPI.list({ limit: 20 }),
-      ]);
-      setProfile(profileRes.data);
-      setAvailable(profileRes.data.isAvailable);
-      setOrders(ordersRes.data.orders);
-    } catch { toast.error('Грешка при зареждане'); }
-    finally { setLoading(false); }
-  }
+      await ordersAPI.addOffer(order.id, {
+        price: Number(form.price),
+        description: form.description,
+        estimatedHours: form.estimatedHours ? Number(form.estimatedHours) : undefined,
+      });
+      toast.success(m.sent);
+      onSent(); onClose();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error || m.error);
+    } finally { setLoading(false); }
+  };
 
-  async function toggleAvailability() {
-    try {
-      await mastersAPI.update({ isAvailable: !available });
-      setAvailable(v => !v);
-      toast.success(!available ? 'Вече приемаш поръчки' : 'Спрял си приемането на поръчки');
-    } catch { toast.error('Грешка'); }
-  }
-
-  if (!user || loading) return <LoadingSkeleton />;
-  if (!profile) return null;
-
-  const vStatus = VERIFY_LABELS[profile.verificationStatus] || { label: profile.verificationStatus, color:'#6B7280' };
-  const level   = LEVEL_STYLES[profile.level] || LEVEL_STYLES.STAJANT;
-  const isApproved = profile.verificationStatus === 'APPROVED';
-  const needsStripe = isApproved && !profile.stripeAccountId;
+  const iS: React.CSSProperties = {
+    width:'100%', padding:'11px 14px', border:'1.5px solid #E2E5EA',
+    borderRadius:10, fontFamily:'Outfit,sans-serif', fontSize:'.9rem',
+    outline:'none', boxSizing:'border-box', color:'#1A1A1A',
+  };
 
   return (
-    <div style={{ minHeight:'100vh', background:'#F8F6F2', paddingTop:80 }}>
-      <div style={{ maxWidth:1100, margin:'0 auto', padding:'32px 20px' }}>
-
-        {/* Alerts */}
-        {!isApproved && (
-          <Alert type="info" icon="🔔">
-            Профилът ти е {vStatus.label}. Качи документите за верификация, за да започнеш да получаваш поръчки.
-            <Link href="/verify" style={{ color:'#E8700A', fontWeight:600, marginLeft:8 }}>Качи документи →</Link>
-          </Alert>
-        )}
-        {needsStripe && (
-          <Alert type="warn" icon="💳">
-            Свържи Stripe акаунта си, за да получаваш плащания.
-            <StripeConnectBtn />
-          </Alert>
-        )}
-
-        {/* Header */}
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:28, flexWrap:'wrap', gap:16 }}>
-          <div style={{ display:'flex', alignItems:'center', gap:16 }}>
-            <div style={{ width:56, height:56, borderRadius:16, background:'linear-gradient(135deg,#1E3A5F,#2a4f82)', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne,sans-serif', fontWeight:800, color:'white', fontSize:'1.3rem' }}>
-              {user.firstName[0]}{user.lastName[0]}
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.55)', zIndex:200,
+      display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background:'white', borderRadius:24, padding:'36px', maxWidth:480, width:'100%' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
+          <h2 style={{ fontFamily:'Syne,sans-serif', fontWeight:800, color:'#1E3A5F', margin:0, fontSize:'1.2rem' }}>
+            {m.title}
+          </h2>
+          <button onClick={onClose} style={{ background:'#F3F4F6', border:'none', width:36, height:36, borderRadius:'50%', cursor:'pointer' }}>✕</button>
+        </div>
+        <div style={{ background:'#EAF0F8', borderRadius:12, padding:'14px 16px', marginBottom:20 }}>
+          <div style={{ fontWeight:700, color:'#1E3A5F', fontSize:'.9rem' }}>{order.title}</div>
+          <div style={{ fontSize:'.78rem', color:'#6B7280', marginTop:4 }}>{order.city} · {order.category}</div>
+        </div>
+        <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+            <div>
+              <label style={{ display:'block', fontWeight:600, fontSize:'.82rem', color:'#1E3A5F', marginBottom:6 }}>{m.priceLabel}</label>
+              <input type="number" value={form.price} onChange={e => setForm(f => ({...f, price:e.target.value}))}
+                placeholder={m.pricePlaceholder} style={iS} />
             </div>
             <div>
-              <h1 style={{ fontFamily:'Syne,sans-serif', fontWeight:800, fontSize:'1.5rem', color:'#1E3A5F', margin:0 }}>
-                {user.firstName} {user.lastName}
-              </h1>
-              <div style={{ display:'flex', gap:8, marginTop:4, flexWrap:'wrap' }}>
-                <span style={{ ...pillStyle, background:level.bg, color:level.color }}>{level.label}</span>
-                <span style={{ ...pillStyle, color:vStatus.color, background:'#F3F4F6' }}>{vStatus.label}</span>
+              <label style={{ display:'block', fontWeight:600, fontSize:'.82rem', color:'#1E3A5F', marginBottom:6 }}>{m.hoursLabel}</label>
+              <input type="number" value={form.estimatedHours} onChange={e => setForm(f => ({...f, estimatedHours:e.target.value}))}
+                placeholder={m.hoursPlaceholder} style={iS} />
+            </div>
+          </div>
+          <div>
+            <label style={{ display:'block', fontWeight:600, fontSize:'.82rem', color:'#1E3A5F', marginBottom:6 }}>{m.descLabel}</label>
+            <textarea value={form.description} onChange={e => setForm(f => ({...f, description:e.target.value}))}
+              placeholder={m.descPlaceholder}
+              rows={4} style={{ ...iS, resize:'vertical' }} />
+          </div>
+          {form.price && (
+            <div style={{ background:'#F0FDF4', borderRadius:10, padding:'12px 14px', fontSize:'.82rem', color:'#166534' }}>
+              <strong>{m.yourEarnings}</strong> ~€{Math.round(Number(form.price) * 0.86).toLocaleString()}
+              <span style={{ color:'#6B7280', marginLeft:6 }}>{m.afterFee}</span>
+            </div>
+          )}
+          <button onClick={submit} disabled={loading} style={{
+            background: loading ? '#9CA3AF' : '#1E3A5F',
+            color:'white', border:'none', padding:'14px', borderRadius:12,
+            fontFamily:'Outfit,sans-serif', fontSize:'1rem', fontWeight:600, cursor: loading ? 'default' : 'pointer',
+          }}>
+            {loading ? m.submitting : m.submit}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function MasterDashboard() {
+  const { user }   = useAuthStore();
+  const { t } = useT();
+  const md = t.masterDash;
+  const router     = useRouter();
+  const [profile,  setProfile]  = useState<any>(null);
+  const [orders,   setOrders]   = useState<any[]>([]);
+  const [myOrders, setMyOrders] = useState<any[]>([]);
+  const [loading,  setLoading]  = useState(true);
+  const [tab,      setTab]      = useState('available');
+  const [offerFor, setOfferFor] = useState<any>(null);
+
+  useEffect(() => {
+    if (!user) { router.push('/login'); return; }
+    if (user.role !== 'MASTER') { router.push('/dashboard'); return; }
+    init();
+  }, [user]);
+
+  const init = async () => {
+    setLoading(true);
+    try {
+      const [profileRes, availRes, myRes] = await Promise.all([
+        mastersAPI.get('me' as any),
+        ordersAPI.list({ status:'PUBLISHED', limit:30 }),
+        ordersAPI.list({ limit:30 }),
+      ]);
+      setProfile(profileRes.data);
+      setOrders(availRes.data.orders);
+      setMyOrders(myRes.data.orders);
+    } catch { toast.error(md.loadError); }
+    finally { setLoading(false); }
+  };
+
+  const master = user?.masterProfile;
+  const levelInfo = LEVEL_INFO[master?.level || 'STAJANT'];
+  const verifyIndex = VERIFY_STEP_KEYS.findIndex(s => s === master?.verificationStatus) ?? 0;
+
+  const weeklyLabels = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const weeklyData = [
+    { label: weeklyLabels[0], amount:320 }, { label: weeklyLabels[1], amount:0 },
+    { label: weeklyLabels[2], amount:580 }, { label: weeklyLabels[3], amount:200 },
+    { label: weeklyLabels[4], amount:950 }, { label: weeklyLabels[5], amount:420 }, { label: weeklyLabels[6], amount:0 },
+  ];
+
+  if (!user) return null;
+
+  return (
+    <div style={{ minHeight:'100vh', background:'#F8F6F2', paddingTop:88 }}>
+      <div style={{ maxWidth:1200, margin:'0 auto', padding:'32px 20px' }}>
+
+        {/* ── Header ── */}
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:32, flexWrap:'wrap', gap:16 }}>
+          <div>
+            <h1 style={{ fontFamily:'Syne,sans-serif', fontWeight:800, fontSize:'1.8rem', color:'#1E3A5F', margin:0 }}>
+              {md.hello} {user.firstName}! {md.emoji}
+            </h1>
+            <div style={{ display:'flex', alignItems:'center', gap:10, marginTop:8 }}>
+              <span style={{
+                background: '#EAF0F8', color: levelInfo.color,
+                padding:'4px 14px', borderRadius:50, fontSize:'.8rem', fontWeight:700,
+              }}>⭐ {levelInfo.label}</span>
+              <span style={{ color:'#9AA3AF', fontSize:'.82rem' }}>
+                {master?.averageRating?.toFixed(1)}★ · {master?.completedOrders} {md.completedOrders}
+              </span>
+            </div>
+          </div>
+          <div style={{ display:'flex', gap:10 }}>
+            <button onClick={() => router.push('/profile/master')} style={{
+              background:'white', border:'1.5px solid #E2E5EA', color:'#1E3A5F',
+              padding:'10px 20px', borderRadius:50, cursor:'pointer', fontWeight:600, fontSize:'.88rem',
+            }}>{md.profileBtn}</button>
+            {!profile?.stripeAccountId && (
+              <button onClick={() => mastersAPI.stripeOnboard().then(r => window.location.href = r.data.onboardingUrl)} style={{
+                background:'#1E3A5F', color:'white', border:'none',
+                padding:'10px 20px', borderRadius:50, cursor:'pointer', fontWeight:600, fontSize:'.88rem',
+              }}>{md.stripeBtn}</button>
+            )}
+          </div>
+        </div>
+
+        {/* ── Verification banner ── */}
+        {master?.verificationStatus !== 'APPROVED' && (
+          <div style={{ background:'white', borderRadius:16, padding:'20px 24px', marginBottom:24,
+            border:'1.5px solid #FCD34D', boxShadow:'0 2px 12px rgba(30,58,95,.06)' }}>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16, flexWrap:'wrap', gap:8 }}>
+              <div>
+                <strong style={{ color:'#1E3A5F', fontFamily:'Syne,sans-serif' }}>{md.verifyTitle}</strong>
+                <p style={{ color:'#9AA3AF', fontSize:'.82rem', margin:'4px 0 0' }}>{md.verifySub}</p>
+              </div>
+              <button onClick={() => router.push('/verify')} style={{
+                background:'#E8700A', color:'white', border:'none',
+                padding:'10px 20px', borderRadius:50, cursor:'pointer', fontWeight:600, fontSize:'.85rem',
+              }}>{md.verifyContinue}</button>
+            </div>
+            <div style={{ display:'flex', gap:0, position:'relative' }}>
+              <div style={{ position:'absolute', top:14, left:'10%', right:'10%', height:2,
+                background:'#E2E5EA', zIndex:0 }} />
+              {VERIFY_STEP_KEYS.map((key, i) => {
+                const done = i <= verifyIndex;
+                return (
+                  <div key={key} style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:8, zIndex:1 }}>
+                    <div style={{
+                      width:28, height:28, borderRadius:'50%',
+                      background: done ? '#1E3A5F' : 'white',
+                      border: done ? 'none' : '2px solid #E2E5EA',
+                      display:'flex', alignItems:'center', justifyContent:'center',
+                      color:'white', fontSize:'.8rem', fontWeight:700,
+                    }}>{done ? '✓' : i+1}</div>
+                    <span style={{ fontSize:'.72rem', color: done ? '#1E3A5F' : '#9AA3AF',
+                      fontWeight: done ? 700 : 400, textAlign:'center' }}>{md.verifySteps[i]}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 320px', gap:24 }}>
+          {/* ── Main: Orders ── */}
+          <div>
+            <div style={{ background:'white', borderRadius:20, boxShadow:'0 2px 12px rgba(30,58,95,.08)' }}>
+              <div style={{ display:'flex', borderBottom:'1.5px solid #F0F1F3', padding:'0 20px' }}>
+                {[['available', md.tabs.available],['mine', md.tabs.mine]].map(([key,label]) => (
+                  <button key={key} onClick={() => setTab(key)} style={{
+                    padding:'16px 20px', border:'none', background:'transparent', cursor:'pointer',
+                    fontFamily:'Outfit,sans-serif', fontSize:'.9rem',
+                    fontWeight: tab===key ? 600 : 400,
+                    color: tab===key ? '#1E3A5F' : '#9AA3AF',
+                    borderBottom: tab===key ? '2.5px solid #E8700A' : '2.5px solid transparent',
+                    marginBottom:'-1.5px',
+                  }}>{label}</button>
+                ))}
+              </div>
+              <div style={{ padding:'16px', display:'flex', flexDirection:'column', gap:10 }}>
+                {loading ? (
+                  <div style={{ textAlign:'center', padding:'40px', color:'#9AA3AF' }}>{t.common.loading}</div>
+                ) : (tab === 'available' ? orders : myOrders).length === 0 ? (
+                  <div style={{ textAlign:'center', padding:'60px 20px', color:'#9AA3AF' }}>
+                    <div style={{ fontSize:48, marginBottom:12 }}>📭</div>
+                    <p>{tab === 'available' ? md.noAvailable : md.noMine}</p>
+                  </div>
+                ) : (tab === 'available' ? orders : myOrders).map((order: any) => (
+                  <div key={order.id} style={{
+                    background:'#F9FAFB', borderRadius:12, padding:'16px',
+                    border:'1.5px solid #F0F1F3', cursor:'pointer',
+                    transition:'all .2s',
+                  }}
+                    onMouseEnter={e => (e.currentTarget.style.borderColor = '#1E3A5F')}
+                    onMouseLeave={e => (e.currentTarget.style.borderColor = '#F0F1F3')}
+                    onClick={() => router.push(`/orders/${order.id}`)}
+                  >
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12 }}>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontFamily:'Syne,sans-serif', fontWeight:700, color:'#1E3A5F', marginBottom:4 }}>
+                          {order.title}
+                        </div>
+                        <div style={{ fontSize:'.78rem', color:'#9AA3AF' }}>
+                          {order.city} · {(md.urgency as any)[order.urgency] || order.urgency}
+                          {order.budget && ` · ${md.upTo} €${order.budget.toLocaleString()}`}
+                        </div>
+                      </div>
+                      {tab === 'available' && master?.verificationStatus === 'APPROVED' && (
+                        <button onClick={e => { e.stopPropagation(); setOfferFor(order); }} style={{
+                          background:'#E8700A', color:'white', border:'none',
+                          padding:'8px 18px', borderRadius:50, cursor:'pointer',
+                          fontWeight:600, fontSize:'.82rem', whiteSpace:'nowrap',
+                        }}>{md.offerBtn}</button>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
-          <div style={{ display:'flex', gap:12, alignItems:'center' }}>
-            <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-              <span style={{ fontSize:'.82rem', color:'#6B7280', fontWeight:500 }}>
-                {available ? 'Приемам поръчки' : 'Не приемам'}
-              </span>
-              <button onClick={toggleAvailability} style={{
-                width:44, height:24, borderRadius:12,
-                background: available ? '#166534' : '#D1D5DB',
-                border:'none', cursor:'pointer', position:'relative', transition:'background .2s',
-              }}>
-                <span style={{
-                  position:'absolute', top:2, left: available ? 22 : 2,
-                  width:20, height:20, borderRadius:'50%', background:'white',
-                  transition:'left .2s', boxShadow:'0 1px 3px rgba(0,0,0,.2)',
-                }} />
-              </button>
+
+          {/* ── Sidebar: Stats ── */}
+          <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+            {/* Earnings */}
+            <div style={{ background:'#1E3A5F', borderRadius:20, padding:'24px', color:'white' }}>
+              <div style={{ fontSize:'.8rem', color:'rgba(255,255,255,.5)', marginBottom:4, textTransform:'uppercase', letterSpacing:'.06em' }}>
+                {md.thisWeek}
+              </div>
+              <div style={{ fontFamily:'Syne,sans-serif', fontSize:'2rem', fontWeight:800, marginBottom:4 }}>
+                €{weeklyData.reduce((s,d) => s+d.amount, 0).toLocaleString()}
+              </div>
+              <EarningsChart data={weeklyData} />
             </div>
-            <Link href={`/masters/${profile.id}`} style={{ ...btnStyle, background:'transparent', color:'#1E3A5F', border:'1.5px solid #E2E5EA' }}>
-              Виж профила
-            </Link>
+
+            {/* Quick stats */}
+            {[
+              { icon:'📋', label: md.stats.active,   value: myOrders.filter(o => o.status === 'IN_PROGRESS').length },
+              { icon:'⏱️', label: md.stats.response, value: `${master?.responseTimeHours || 4}h` },
+              { icon:'⭐', label: md.stats.rating,   value: `${master?.averageRating?.toFixed(1) || '–'} / 5` },
+            ].map(s => (
+              <div key={s.label} style={{ background:'white', borderRadius:16, padding:'20px',
+                boxShadow:'0 2px 8px rgba(30,58,95,.06)', display:'flex', alignItems:'center', gap:14 }}>
+                <span style={{ fontSize:28 }}>{s.icon}</span>
+                <div>
+                  <div style={{ fontFamily:'Syne,sans-serif', fontWeight:800, fontSize:'1.3rem', color:'#1E3A5F' }}>{s.value}</div>
+                  <div style={{ fontSize:'.78rem', color:'#9AA3AF' }}>{s.label}</div>
+                </div>
+              </div>
+            ))}
+
+            {/* Next level */}
+            {levelInfo.next && (
+              <div style={{ background:'#FEF3E8', borderRadius:16, padding:'20px', border:'1.5px solid #FDBA74' }}>
+                <div style={{ fontWeight:700, color:'#92400E', fontSize:'.88rem', marginBottom:8 }}>
+                  {md.nextLevel}
+                </div>
+                <div style={{ fontSize:'.82rem', color:'#92400E' }}>{levelInfo.next}</div>
+              </div>
+            )}
           </div>
         </div>
-
-        {/* Stats */}
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:16, marginBottom:28 }}>
-          {[
-            { label:'Завършени',   value: profile.completedOrders, icon:'✅' },
-            { label:'Рейтинг',     value: profile.averageRating?.toFixed(1) || '–', icon:'⭐', accent:true },
-            { label:'Отзиви',      value: profile.totalReviews,    icon:'💬' },
-            { label:'Ниво',        value: profile.level?.replace('_',' '), icon:'🏆' },
-          ].map(s => (
-            <div key={s.label} style={{ background: s.accent ? '#1E3A5F' : 'white', borderRadius:16, padding:'20px 22px', boxShadow:'0 2px 8px rgba(30,58,95,.07)' }}>
-              <div style={{ fontSize:22, marginBottom:8 }}>{s.icon}</div>
-              <div style={{ fontFamily:'Syne,sans-serif', fontWeight:800, fontSize:'1.6rem', color: s.accent ? 'white' : '#1E3A5F', lineHeight:1 }}>{s.value}</div>
-              <div style={{ fontSize:'.75rem', color: s.accent ? 'rgba(255,255,255,.6)' : '#6B7280', marginTop:4 }}>{s.label}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* Level progress */}
-        <LevelProgress profile={profile} />
-
-        {/* Available orders */}
-        <h2 style={{ fontFamily:'Syne,sans-serif', fontWeight:700, fontSize:'1.1rem', color:'#1E3A5F', marginBottom:16, marginTop:28 }}>
-          Налични поръчки в {profile.city}
-        </h2>
-
-        {!isApproved ? (
-          <div style={{ textAlign:'center', padding:40, background:'white', borderRadius:16, color:'#6B7280', fontSize:'.9rem' }}>
-            Верифицирай профила си, за да виждаш налични поръчки.
-          </div>
-        ) : orders.length === 0 ? (
-          <div style={{ textAlign:'center', padding:40, background:'white', borderRadius:16, color:'#6B7280', fontSize:'.9rem' }}>
-            Няма нови поръчки в момента. Провери по-късно.
-          </div>
-        ) : (
-          <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
-            {orders.map(o => <AvailableOrderCard key={o.id} order={o} />)}
-          </div>
-        )}
       </div>
+      {offerFor && <OfferModal order={offerFor} onClose={() => setOfferFor(null)} onSent={init} />}
     </div>
   );
 }
-
-function LevelProgress({ profile }: { profile: any }) {
-  const levels = ['STAJANT','MAJSTOR','PRO_MAJSTOR','ELIT','CERTIFIED'];
-  const current = levels.indexOf(profile.level);
-  const nextReqs: Record<string,string> = { STAJANT:'10 поръчки + 4.0★', MAJSTOR:'30 поръчки + 4.3★', PRO_MAJSTOR:'75 поръчки + 4.6★', ELIT:'150 поръчки + 4.8★' };
-
-  return (
-    <div style={{ background:'white', borderRadius:16, padding:'20px 24px', boxShadow:'0 2px 8px rgba(30,58,95,.07)' }}>
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
-        <span style={{ fontFamily:'Syne,sans-serif', fontWeight:700, fontSize:'.95rem', color:'#1E3A5F' }}>Прогрес към следващо ниво</span>
-        {profile.level !== 'CERTIFIED' && (
-          <span style={{ fontSize:'.78rem', color:'#6B7280' }}>Следващо: {nextReqs[profile.level]}</span>
-        )}
-      </div>
-      <div style={{ display:'flex', gap:6 }}>
-        {levels.map((l, i) => (
-          <div key={l} style={{ flex:1, textAlign:'center' }}>
-            <div style={{ height:6, borderRadius:3, background: i <= current ? '#1E3A5F' : '#E2E5EA', marginBottom:6, transition:'background .3s' }} />
-            <span style={{ fontSize:'.65rem', color: i === current ? '#E8700A' : '#9CA3AF', fontWeight: i === current ? 700 : 400 }}>
-              {i+1}
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function AvailableOrderCard({ order }: { order: any }) {
-  const router = useRouter();
-  const [sending, setSending] = useState(false);
-
-  return (
-    <div style={{ background:'white', borderRadius:14, padding:'20px 24px', boxShadow:'0 2px 6px rgba(30,58,95,.06)', border:'1.5px solid #F0F1F3', cursor:'pointer' }}
-      onClick={() => router.push(`/orders/${order.id}`)}>
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:8 }}>
-        <div>
-          <span style={{ fontFamily:'Syne,sans-serif', fontWeight:700, color:'#1E3A5F', fontSize:'.95rem' }}>{order.title}</span>
-          <div style={{ fontSize:'.78rem', color:'#6B7280', marginTop:3 }}>
-            📍 {order.city} · {order.category} · {order.urgency === 'URGENT' ? '🔴 Спешно' : order.urgency === 'WITHIN_3_DAYS' ? '🟡 До 3 дни' : '🟢 Гъвкаво'}
-          </div>
-        </div>
-        {order.budget && (
-          <span style={{ fontFamily:'Syne,sans-serif', fontWeight:800, fontSize:'1.1rem', color:'#E8700A' }}>
-            up to €{order.budget}
-          </span>
-        )}
-      </div>
-      <p style={{ fontSize:'.85rem', color:'#6B7280', margin:'0 0 12px', lineHeight:1.6,
-        overflow:'hidden', display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical' }}>
-        {order.description}
-      </p>
-      <div style={{ display:'flex', justifyContent:'flex-end' }} onClick={e => e.stopPropagation()}>
-        <button onClick={() => router.push(`/orders/${order.id}#make-offer`)} style={{
-          background:'#1E3A5F', color:'white', border:'none',
-          padding:'8px 20px', borderRadius:50, fontSize:'.82rem', fontWeight:600, cursor:'pointer',
-        }}>
-          Изпрати оферта →
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function Alert({ type, icon, children }: { type:'info'|'warn'; icon:string; children: React.ReactNode }) {
-  const colors = { info: { bg:'#EFF6FF', border:'#BFDBFE', text:'#1E40AF' }, warn: { bg:'#FFFBEB', border:'#FDE68A', text:'#92400E' } };
-  const c = colors[type];
-  return (
-    <div style={{ background:c.bg, border:`1.5px solid ${c.border}`, borderRadius:12, padding:'14px 20px', marginBottom:16, display:'flex', gap:10, alignItems:'center', fontSize:'.88rem', color:c.text, flexWrap:'wrap' }}>
-      <span>{icon}</span><span style={{ flex:1 }}>{children}</span>
-    </div>
-  );
-}
-
-function StripeConnectBtn() {
-  const [loading, setLoading] = useState(false);
-  async function connect() {
-    setLoading(true);
-    try {
-      const { data } = await mastersAPI.stripeOnboard();
-      window.location.href = data.onboardingUrl;
-    } catch { toast.error('Грешка при Stripe'); setLoading(false); }
-  }
-  return (
-    <button onClick={connect} disabled={loading} style={{ background:'#635BFF', color:'white', border:'none', padding:'6px 16px', borderRadius:50, fontSize:'.8rem', fontWeight:600, cursor:'pointer', marginLeft:12 }}>
-      {loading ? '...' : 'Свържи Stripe →'}
-    </button>
-  );
-}
-
-function LoadingSkeleton() {
-  return (
-    <div style={{ minHeight:'100vh', background:'#F8F6F2', paddingTop:100, display:'flex', alignItems:'center', justifyContent:'center' }}>
-      <div style={{ color:'#6B7280', fontSize:'1rem' }}>Зареждане...</div>
-    </div>
-  );
-}
-
-const pillStyle: React.CSSProperties = { padding:'3px 12px', borderRadius:50, fontSize:'.72rem', fontWeight:700 };
-const btnStyle:  React.CSSProperties = { background:'#1E3A5F', color:'white', padding:'10px 22px', borderRadius:50, textDecoration:'none', fontWeight:600, fontSize:'.85rem', display:'inline-block' };

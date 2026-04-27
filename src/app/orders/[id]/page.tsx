@@ -19,7 +19,18 @@ function ChatPanel({ orderId, currentUserId }: { orderId: string; currentUserId:
   const [sending, setSending] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
+  // Chat requires Firebase. When unconfigured, render a minimal placeholder.
+  if (!db) {
+    return (
+      <div style={{ padding: 32, textAlign: 'center', color: '#9AA3AF' }}>
+        <div style={{ fontSize: 36, marginBottom: 8 }}>💬</div>
+        <p style={{ fontSize: '.9rem' }}>Chat is unavailable until Firebase is configured.</p>
+      </div>
+    );
+  }
+
   useEffect(() => {
+    if (!db) return;
     const q = query(
       collection(db, `orders/${orderId}/messages`),
       orderBy('createdAt', 'asc')

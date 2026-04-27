@@ -1,272 +1,355 @@
 // AnyFix – src/app/admin/page.tsx
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/lib/store';
 import { adminAPI } from '@/lib/api';
+import { useT } from '@/lib/lang';
 import toast from 'react-hot-toast';
 
-export default function AdminDashboard() {
-  const { user } = useAuthStore();
-  const router   = useRouter();
-  const [stats,   setStats]   = useState<any>(null);
-  const [masters, setMasters] = useState<any[]>([]);
-  const [disputes,setDisputes]= useState<any[]>([]);
-  const [frauds,  setFrauds]  = useState<any[]>([]);
-  const [tab,     setTab]     = useState<'overview'|'verify'|'disputes'|'fraud'>('overview');
-  const [loading, setLoading] = useState(true);
+// ─── Stat Card ─────────────────────────────────────────────
+function KpiCard({ icon, label, value, color, onClick }: any) {
+  return (
+    <div onClick={onClick} style={{
+      background:'white', borderRadius:16, padding:'22px',
+      boxShadow:'0 2px 12px rgba(30,58,95,.08)',
+      border:`2px solid ${color}20`,
+      cursor: onClick ? 'pointer' : 'default',
+      transition:'all .2s',
+    }}
+      onMouseEnter={e => onClick && (e.currentTarget.style.borderColor = color)}
+      onMouseLeave={e => onClick && (e.currentTarget.style.borderColor = `${color}20`)}
+    >
+      <div style={{ fontSize:28, marginBottom:8 }}>{icon}</div>
+      <div style={{ fontFamily:'Syne,sans-serif', fontWeight:800, fontSize:'1.9rem', color }}>{value}</div>
+      <div style={{ fontSize:'.82rem', color:'#6B7280', marginTop:4, fontWeight:500 }}>{label}</div>
+    </div>
+  );
+}
 
-  useEffect(() => {
-    if (!user) return;
-    if (user.role !== 'ADMIN') { router.push('/dashboard'); return; }
-    loadAll();
-  }, [user]);
+// ─── Master Row ────────────────────────────────────────────
+function MasterRow({ master, onAction }: { master: any; onAction: () => void }) {
+  const { t } = useT();
+  const a = t.admin;
+  const [loading, setLoading] = useState(false);
+  const u = master.user;
 
-  async function loadAll() {
+  const act = async (action: string, note?: string) => {
     setLoading(true);
     try {
-      const [s, m, d, f] = await Promise.all([
-        adminAPI.getStats(),
-        adminAPI.getMasters({ status:'DOCUMENTS_SUBMITTED', limit:20 }),
-        adminAPI.getDisputes({ status:'OPEN', limit:20 }),
-        adminAPI.getFraudLogs(),
-      ]);
-      setStats(s.data);
-      setMasters(m.data.masters);
-      setDisputes(d.data.disputes);
-      setFrauds(f.data);
-    } catch { toast.error('Грешка при зареждане'); }
+      await adminAPI.updateMaster(master.id, { action, note });
+      toast.success(a.masterRow.approvedMsg(action));
+      onAction();
+    } catch { toast.error(t.common.error); }
     finally { setLoading(false); }
-  }
+  };
 
-  async function verifyMaster(id: string, action: string) {
-    try {
-      await adminAPI.updateMaster(id, { action });
-      toast.success(`Майсторът е ${action === 'APPROVE' ? 'одобрен' : 'отказан'}`);
-      loadAll();
-    } catch { toast.error('Грешка'); }
-  }
-
-  async function resolveDispute(id: string, action: string) {
-    const resolution = prompt('Въведи решение:');
-    if (!resolution) return;
-    try {
-      await adminAPI.resolveDispute(id, { action, resolution });
-      toast.success('Спорът е разрешен');
-      loadAll();
-    } catch { toast.error('Грешка'); }
-  }
-
-  if (!user || loading) return <Loading />;
+  const statusColors: Record<string, { c: string; bg: string }> = {
+    PENDING:              { c:'#6B7280', bg:'#F3F4F6' },
+    DOCUMENTS_SUBMITTED:  { c:'#92400E', bg:'#FFFBEB' },
+    UNDER_REVIEW:         { c:'#1D4ED8', bg:'#EFF6FF' },
+    INTERVIEW_SCHEDULED:  { c:'#7C3AED', bg:'#FAF5FF' },
+    APPROVED:             { c:'#166534', bg:'#F0FDF4' },
+    REJECTED:             { c:'#991B1B', bg:'#FEF2F2' },
+  };
+  const sm = statusColors[master.verificationStatus] || { c:'#6B7280', bg:'#F3F4F6' };
+  const verLabel = (a.verStatus as any)[master.verificationStatus] || master.verificationStatus;
 
   return (
-    <div style={{ minHeight:'100vh', background:'#F8F6F2', paddingTop:80 }}>
-      <div style={{ maxWidth:1200, margin:'0 auto', padding:'28px 20px' }}>
-
-        {/* Header */}
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:28 }}>
-          <div>
-            <h1 style={{ fontFamily:'Syne,sans-serif', fontWeight:800, fontSize:'1.8rem', color:'#1E3A5F', margin:0 }}>Admin Панел</h1>
-            <p style={{ color:'#6B7280', fontSize:'.85rem', margin:'4px 0 0' }}>AnyFix вътрешна администрация</p>
-          </div>
-          <button onClick={loadAll} style={{ background:'white', border:'1.5px solid #E2E5EA', color:'#6B7280', padding:'9px 20px', borderRadius:50, cursor:'pointer', fontSize:'.85rem', fontWeight:500 }}>
-            🔄 Обнови
-          </button>
+    <div style={{ padding:'16px 20px', border:'1.5px solid #F0F1F3', borderRadius:12,
+      background:'white', display:'flex', alignItems:'center', gap:16, flexWrap:'wrap' }}>
+      <div style={{
+        width:44, height:44, borderRadius:12, flexShrink:0,
+        background:'linear-gradient(135deg,#1E3A5F,#E8700A)',
+        display:'flex', alignItems:'center', justifyContent:'center',
+        fontFamily:'Syne,sans-serif', fontWeight:800, color:'white',
+      }}>
+        {u?.firstName?.[0]}{u?.lastName?.[0]}
+      </div>
+      <div style={{ flex:1, minWidth:180 }}>
+        <div style={{ fontFamily:'Syne,sans-serif', fontWeight:700, color:'#1E3A5F' }}>
+          {u?.firstName} {u?.lastName}
         </div>
-
-        {/* Stats grid */}
-        {stats && (
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:16, marginBottom:28 }}>
-            {[
-              { label:'Потребители', value:stats.totalUsers, icon:'👥', color:'#1E3A5F' },
-              { label:'Верифицирани майстори', value:stats.totalMasters, icon:'✅', color:'#166534' },
-              { label:'Revenue (€)', value:`€${stats.totalRevenue?.toFixed(0)}`, icon:'💰', color:'#E8700A' },
-              { label:'Отворени спорове', value:stats.openDisputes, icon:'⚠️', color: stats.openDisputes > 0 ? '#DC2626' : '#6B7280' },
-            ].map(s => (
-              <div key={s.label} style={{ background:'white', borderRadius:16, padding:'20px 22px', boxShadow:'0 2px 8px rgba(30,58,95,.07)' }}>
-                <div style={{ fontSize:22, marginBottom:8 }}>{s.icon}</div>
-                <div style={{ fontFamily:'Syne,sans-serif', fontWeight:800, fontSize:'1.7rem', color:s.color, lineHeight:1 }}>{s.value}</div>
-                <div style={{ fontSize:'.75rem', color:'#6B7280', marginTop:4 }}>{s.label}</div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Alert badges */}
-        {stats && (
-          <div style={{ display:'flex', gap:10, marginBottom:24, flexWrap:'wrap' }}>
-            {stats.pendingVerification > 0 && (
-              <div style={{ background:'#FFFBEB', border:'1.5px solid #FDE68A', borderRadius:10, padding:'10px 16px', fontSize:'.85rem', color:'#92400E', fontWeight:500 }}>
-                🔔 {stats.pendingVerification} майстора чакат верификация
-              </div>
-            )}
-            {stats.flaggedMessages > 0 && (
-              <div style={{ background:'#FEF2F2', border:'1.5px solid #FECACA', borderRadius:10, padding:'10px 16px', fontSize:'.85rem', color:'#DC2626', fontWeight:500 }}>
-                ⚠️ {stats.flaggedMessages} флагнати съобщения (Anti-Fraud)
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Tabs */}
-        <div style={{ display:'flex', gap:4, marginBottom:24, background:'white', padding:6, borderRadius:14, width:'fit-content', boxShadow:'0 2px 6px rgba(30,58,95,.06)' }}>
-          {[
-            { key:'overview', label:'📊 Обзор' },
-            { key:'verify',   label:`🔍 Верификации ${masters.length > 0 ? `(${masters.length})` : ''}` },
-            { key:'disputes', label:`⚖️ Спорове ${disputes.length > 0 ? `(${disputes.length})` : ''}` },
-            { key:'fraud',    label:`🛡️ Anti-Fraud ${frauds.length > 0 ? `(${frauds.length})` : ''}` },
-          ].map(t => (
-            <button key={t.key} onClick={() => setTab(t.key as any)} style={{
-              padding:'8px 20px', borderRadius:10, border:'none',
-              background: tab===t.key ? '#1E3A5F' : 'transparent',
-              color: tab===t.key ? 'white' : '#6B7280',
-              fontFamily:'Outfit,sans-serif', fontSize:'.85rem', fontWeight:600, cursor:'pointer',
-            }}>
-              {t.label}
-            </button>
+        <div style={{ fontSize:'.78rem', color:'#9AA3AF' }}>
+          {u?.email} · {u?.phone}
+        </div>
+        <div style={{ display:'flex', gap:6, marginTop:6, flexWrap:'wrap' }}>
+          {master.categories?.map((c: any) => (
+            <span key={c.category} style={{ background:'#EAF0F8', color:'#1E3A5F',
+              padding:'2px 10px', borderRadius:50, fontSize:'.7rem', fontWeight:600 }}>
+              {c.category}
+            </span>
           ))}
         </div>
+      </div>
+      <div style={{ display:'flex', flexDirection:'column', gap:6, alignItems:'flex-end' }}>
+        <span style={{ background: sm.bg, color: sm.c, padding:'4px 12px',
+          borderRadius:50, fontSize:'.75rem', fontWeight:700 }}>
+          {verLabel}
+        </span>
+        <div style={{ fontSize:'.75rem', color:'#9AA3AF' }}>
+          {master.documents?.length || 0} {a.masterRow.documents}
+        </div>
+      </div>
+      {['DOCUMENTS_SUBMITTED','UNDER_REVIEW','INTERVIEW_SCHEDULED'].includes(master.verificationStatus) && (
+        <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+          <button onClick={() => act('APPROVE')} disabled={loading} style={{
+            background:'#166534', color:'white', border:'none',
+            padding:'8px 16px', borderRadius:50, cursor:'pointer', fontSize:'.78rem', fontWeight:600,
+          }}>{a.masterRow.approve}</button>
+          <button onClick={() => act('SCHEDULE_INTERVIEW')} disabled={loading} style={{
+            background:'#7C3AED', color:'white', border:'none',
+            padding:'8px 16px', borderRadius:50, cursor:'pointer', fontSize:'.78rem', fontWeight:600,
+          }}>{a.masterRow.interview}</button>
+          <button onClick={() => {
+            const note = prompt(a.masterRow.rejectPrompt);
+            if (note) act('REJECT', note);
+          }} disabled={loading} style={{
+            background:'#FEF2F2', color:'#991B1B', border:'1px solid #FECACA',
+            padding:'8px 16px', borderRadius:50, cursor:'pointer', fontSize:'.78rem', fontWeight:600,
+          }}>{a.masterRow.reject}</button>
+        </div>
+      )}
+    </div>
+  );
+}
 
-        {/* Tab content */}
-        {tab === 'overview' && stats && (
-          <div style={{ background:'white', borderRadius:18, padding:'28px' }}>
-            <h2 style={sectionTitle}>Активни поръчки по статус</h2>
-            <p style={{ color:'#6B7280', fontSize:'.9rem' }}>Активни: <strong>{stats.activeOrders}</strong> · Общо: <strong>{stats.totalOrders}</strong></p>
-          </div>
-        )}
+// ─── Dispute Row ───────────────────────────────────────────
+function DisputeRow({ dispute, onAction }: { dispute: any; onAction: () => void }) {
+  const { t } = useT();
+  const a = t.admin;
+  const order = dispute.order;
+  const [loading, setLoading] = useState(false);
 
-        {tab === 'verify' && (
-          <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
-            {masters.length === 0 ? (
-              <EmptyCard icon="✅" msg="Няма чакащи верификации" />
-            ) : masters.map((m: any) => (
-              <div key={m.id} style={{ background:'white', borderRadius:16, padding:'22px 26px', boxShadow:'0 2px 6px rgba(30,58,95,.06)' }}>
-                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:14 }}>
-                  <div>
-                    <h3 style={{ fontFamily:'Syne,sans-serif', fontWeight:700, color:'#1E3A5F', margin:0, fontSize:'1rem' }}>
-                      {m.user.firstName} {m.user.lastName}
-                    </h3>
-                    <p style={{ color:'#6B7280', fontSize:'.8rem', margin:'3px 0 0' }}>{m.user.email} · {m.user.phone}</p>
-                    <p style={{ color:'#6B7280', fontSize:'.8rem', margin:'2px 0 0' }}>
-                      Категории: {m.categories?.map((c: any) => c.category).join(', ') || '–'}
-                    </p>
-                  </div>
-                  <div style={{ display:'flex', gap:8 }}>
-                    <button onClick={() => verifyMaster(m.id, 'APPROVE')} style={{ background:'#166534', color:'white', border:'none', padding:'9px 18px', borderRadius:50, fontSize:'.82rem', fontWeight:600, cursor:'pointer' }}>
-                      ✓ Одобри
-                    </button>
-                    <button onClick={() => verifyMaster(m.id, 'SCHEDULE_INTERVIEW')} style={{ background:'#7C3AED', color:'white', border:'none', padding:'9px 18px', borderRadius:50, fontSize:'.82rem', fontWeight:600, cursor:'pointer' }}>
-                      📅 Интервю
-                    </button>
-                    <button onClick={() => verifyMaster(m.id, 'REJECT')} style={{ background:'#DC2626', color:'white', border:'none', padding:'9px 18px', borderRadius:50, fontSize:'.82rem', fontWeight:600, cursor:'pointer' }}>
-                      ✕ Откажи
-                    </button>
-                  </div>
-                </div>
-                <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-                  {m.documents?.map((d: any) => (
-                    <a key={d.id} href={`/api/admin/documents/${d.id}`} target="_blank" style={{
-                      background: d.status==='APPROVED' ? '#F0FDF4' : '#F3F4F6',
-                      color: d.status==='APPROVED' ? '#166534' : '#6B7280',
-                      padding:'5px 12px', borderRadius:50, fontSize:'.72rem', fontWeight:600, textDecoration:'none', cursor:'pointer',
-                    }}>
-                      {d.type} {d.status==='APPROVED' ? '✅' : '⏳'}
-                    </a>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+  const resolve = async (action: string) => {
+    const resolution = prompt(a.disputeRow.decisionPrompt);
+    if (!resolution) return;
+    setLoading(true);
+    try {
+      await adminAPI.resolveDispute(dispute.id, { action, resolution });
+      toast.success(a.disputeRow.resolved);
+      onAction();
+    } catch { toast.error(t.common.error); }
+    finally { setLoading(false); }
+  };
 
-        {tab === 'disputes' && (
-          <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
-            {disputes.length === 0 ? (
-              <EmptyCard icon="⚖️" msg="Няма отворени спорове" />
-            ) : disputes.map((d: any) => (
-              <div key={d.id} style={{ background:'white', borderRadius:16, padding:'22px 26px', boxShadow:'0 2px 6px rgba(30,58,95,.06)', border:'1.5px solid #FECACA' }}>
-                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:12 }}>
-                  <div>
-                    <h3 style={{ fontFamily:'Syne,sans-serif', fontWeight:700, color:'#1E3A5F', margin:0, fontSize:'.95rem' }}>
-                      Поръчка #{d.orderId.slice(0,8)} · {d.order?.category}
-                    </h3>
-                    <p style={{ color:'#6B7280', fontSize:'.8rem', margin:'3px 0 0' }}>
-                      Клиент: {d.order?.client?.firstName} {d.order?.client?.lastName} · {new Date(d.createdAt).toLocaleDateString('bg-BG')}
-                    </p>
-                    {d.order?.payment?.amount && (
-                      <p style={{ color:'#E8700A', fontSize:'.82rem', margin:'2px 0 0', fontWeight:600 }}>
-                        💰 Amount: €{d.order.payment.amount.toFixed(0)}
-                      </p>
-                    )}
-                  </div>
-                  <div style={{ display:'flex', gap:8 }}>
-                    <button onClick={() => resolveDispute(d.id, 'RESOLVE_CLIENT')} style={{ background:'#166534', color:'white', border:'none', padding:'8px 16px', borderRadius:50, fontSize:'.78rem', fontWeight:600, cursor:'pointer' }}>
-                      Върни на клиент
-                    </button>
-                    <button onClick={() => resolveDispute(d.id, 'RESOLVE_MASTER')} style={{ background:'#1E3A5F', color:'white', border:'none', padding:'8px 16px', borderRadius:50, fontSize:'.78rem', fontWeight:600, cursor:'pointer' }}>
-                      Освободи на майстор
-                    </button>
-                  </div>
-                </div>
-                <div style={{ background:'#FEF2F2', borderRadius:10, padding:'10px 14px' }}>
-                  <p style={{ color:'#991B1B', fontSize:'.82rem', margin:0, lineHeight:1.6 }}>
-                    <strong>Причина:</strong> {d.reason}
-                  </p>
-                  <p style={{ color:'#991B1B', fontSize:'.82rem', margin:'4px 0 0' }}>{d.description}</p>
-                </div>
-              </div>
-            ))}
+  return (
+    <div style={{ padding:'16px 20px', border:'1.5px solid #FECACA', borderRadius:12, background:'#FEF2F2' }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12, flexWrap:'wrap' }}>
+        <div style={{ flex:1 }}>
+          <div style={{ fontFamily:'Syne,sans-serif', fontWeight:700, color:'#991B1B' }}>
+            ⚠️ {order?.title}
           </div>
-        )}
-
-        {tab === 'fraud' && (
-          <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
-            {frauds.length === 0 ? (
-              <EmptyCard icon="🛡️" msg="Няма регистрирани измами" />
-            ) : frauds.map((f: any) => (
-              <div key={f.id} style={{ background:'white', borderRadius:14, padding:'18px 22px', boxShadow:'0 2px 6px rgba(30,58,95,.05)', border:'1.5px solid #FECACA' }}>
-                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
-                  <div>
-                    <span style={{ fontFamily:'Syne,sans-serif', fontWeight:700, color:'#991B1B', fontSize:'.9rem' }}>
-                      {f.action === 'HONEYPOT_DEPLOYED' ? '🍯 Honeypot' : '⚠️ Fraud засечен'}
-                    </span>
-                    <span style={{ fontSize:'.75rem', color:'#6B7280', marginLeft:12 }}>{new Date(f.createdAt).toLocaleString('bg-BG')}</span>
-                  </div>
-                  {f.metadata?.score && (
-                    <span style={{ background:'#FEF2F2', color:'#DC2626', padding:'4px 12px', borderRadius:50, fontSize:'.75rem', fontWeight:700 }}>
-                      Риск: {f.metadata.score}/15
-                    </span>
-                  )}
-                </div>
-                {f.user && (
-                  <p style={{ fontSize:'.82rem', color:'#6B7280', margin:'0 0 6px' }}>
-                    Потребител: <strong>{f.user.firstName} {f.user.lastName}</strong> ({f.user.role})
-                  </p>
-                )}
-                {f.metadata?.reasons && (
-                  <p style={{ fontSize:'.8rem', color:'#4B5563', margin:0 }}>Засечено: {f.metadata.reasons}</p>
-                )}
-              </div>
-            ))}
+          <div style={{ fontSize:'.78rem', color:'#6B7280', margin:'4px 0' }}>
+            {a.disputeRow.client}: {order?.client?.firstName} {order?.client?.lastName} ·
+            {a.disputeRow.amount}: €{order?.payment?.amount?.toLocaleString()}
           </div>
-        )}
+          <div style={{ fontSize:'.85rem', color:'#1A1A1A', marginTop:6 }}>
+            <strong>{a.disputeRow.reason}</strong> {dispute.reason}
+          </div>
+        </div>
+        <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+          <button onClick={() => resolve('RESOLVE_CLIENT')} disabled={loading} style={{
+            background:'#991B1B', color:'white', border:'none',
+            padding:'8px 16px', borderRadius:50, cursor:'pointer', fontSize:'.78rem', fontWeight:600,
+          }}>{a.disputeRow.refundClient}</button>
+          <button onClick={() => resolve('RESOLVE_MASTER')} disabled={loading} style={{
+            background:'#166534', color:'white', border:'none',
+            padding:'8px 16px', borderRadius:50, cursor:'pointer', fontSize:'.78rem', fontWeight:600,
+          }}>{a.disputeRow.releaseMaster}</button>
+        </div>
       </div>
     </div>
   );
 }
 
-function EmptyCard({ icon, msg }: { icon:string; msg:string }) {
+// ─── Main Admin Page ───────────────────────────────────────
+export default function AdminPage() {
+  const { user }   = useAuthStore();
+  const { t } = useT();
+  const a = t.admin;
+  const router     = useRouter();
+  const [stats,    setStats]    = useState<any>(null);
+  const [masters,  setMasters]  = useState<any[]>([]);
+  const [disputes, setDisputes] = useState<any[]>([]);
+  const [fraud,    setFraud]    = useState<any[]>([]);
+  const [loading,  setLoading]  = useState(true);
+  const [tab,      setTab]      = useState('overview');
+  const [search,   setSearch]   = useState('');
+  const [verFilter, setVerFilter] = useState('');
+
+  useEffect(() => {
+    if (!user) { router.push('/login'); return; }
+    if (user.role !== 'ADMIN') { router.push('/dashboard'); return; }
+    init();
+  }, [user]);
+
+  const init = async () => {
+    setLoading(true);
+    try {
+      const [statsRes, mastersRes, disputesRes, fraudRes] = await Promise.all([
+        adminAPI.getStats(),
+        adminAPI.getMasters({ status: verFilter || undefined, search: search || undefined }),
+        adminAPI.getDisputes({ status:'OPEN' }),
+        adminAPI.getFraudLogs(),
+      ]);
+      setStats(statsRes.data);
+      setMasters(mastersRes.data.masters);
+      setDisputes(disputesRes.data.disputes);
+      setFraud(fraudRes.data);
+    } catch { toast.error(t.common.error); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { if (user?.role === 'ADMIN') init(); }, [search, verFilter]);
+
+  if (!user) return null;
+
   return (
-    <div style={{ background:'white', borderRadius:16, padding:48, textAlign:'center', color:'#9CA3AF', boxShadow:'0 2px 6px rgba(30,58,95,.05)' }}>
-      <div style={{ fontSize:40, marginBottom:8 }}>{icon}</div>
-      <p style={{ margin:0, fontSize:'.9rem' }}>{msg}</p>
+    <div style={{ minHeight:'100vh', background:'#F8F6F2', paddingTop:88 }}>
+      <div style={{ maxWidth:1200, margin:'0 auto', padding:'32px 20px' }}>
+
+        {/* ── Header ── */}
+        <div style={{ display:'flex', alignItems:'center', gap:16, marginBottom:32 }}>
+          <div style={{ flex:1 }}>
+            <h1 style={{ fontFamily:'Syne,sans-serif', fontWeight:800, fontSize:'1.8rem', color:'#1E3A5F', margin:0 }}>
+              {a.title}
+            </h1>
+            <p style={{ color:'#9AA3AF', margin:'4px 0 0', fontSize:'.88rem' }}>
+              {a.subtitle}
+            </p>
+          </div>
+        </div>
+
+        {/* ── KPI row ── */}
+        {stats && (
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:14, marginBottom:28 }}>
+            <KpiCard icon="👥" label={a.kpi.users}        value={stats.totalUsers}         color="#1E3A5F" />
+            <KpiCard icon="🔧" label={a.kpi.masters}      value={stats.totalMasters}        color="#1E3A5F" onClick={() => setTab('masters')} />
+            <KpiCard icon="⏳" label={a.kpi.pending}      value={stats.pendingVerification} color="#E8700A" onClick={() => { setTab('masters'); setVerFilter('DOCUMENTS_SUBMITTED'); }} />
+            <KpiCard icon="💰" label={a.kpi.revenue}      value={`€${(stats.totalRevenue || 0).toLocaleString()}`} color="#166534" />
+            <KpiCard icon="📋" label={a.kpi.activeOrders} value={stats.activeOrders}        color="#1D4ED8" />
+            <KpiCard icon="⚠️" label={a.kpi.disputes}     value={stats.openDisputes}        color="#991B1B" onClick={() => setTab('disputes')} />
+            <KpiCard icon="🚨" label={a.kpi.fraud}        value={stats.flaggedMessages}     color="#DC2626" onClick={() => setTab('fraud')} />
+            <KpiCard icon="📊" label={a.kpi.totalOrders}  value={stats.totalOrders}         color="#6B7280" />
+          </div>
+        )}
+
+        {/* ── Tabs ── */}
+        <div style={{ background:'white', borderRadius:20, boxShadow:'0 2px 12px rgba(30,58,95,.08)', overflow:'hidden' }}>
+          <div style={{ display:'flex', borderBottom:'1.5px solid #F0F1F3', padding:'0 20px', overflowX:'auto' }}>
+            {[
+              ['overview', a.tabs.overview],
+              ['masters',  a.tabs.masters],
+              ['disputes', a.tabs.disputes],
+              ['fraud',    a.tabs.fraud],
+            ].map(([key,label]) => (
+              <button key={key} onClick={() => setTab(key)} style={{
+                padding:'15px 16px', border:'none', background:'transparent', cursor:'pointer',
+                fontFamily:'Outfit,sans-serif', fontSize:'.85rem', whiteSpace:'nowrap',
+                fontWeight: tab===key ? 600 : 400,
+                color: tab===key ? '#1E3A5F' : '#9AA3AF',
+                borderBottom: tab===key ? '2.5px solid #E8700A' : '2.5px solid transparent',
+                marginBottom:'-1.5px',
+              }}>{label}</button>
+            ))}
+          </div>
+
+          <div style={{ padding:'20px' }}>
+
+            {tab === 'overview' && (
+              <div>
+                <h3 style={{ fontFamily:'Syne,sans-serif', color:'#1E3A5F', margin:'0 0 16px' }}>{a.overview.title}</h3>
+                {disputes.slice(0,3).map(d => (
+                  <DisputeRow key={d.id} dispute={d} onAction={init} />
+                ))}
+                {masters.filter(m => m.verificationStatus === 'DOCUMENTS_SUBMITTED').slice(0,3).map(m => (
+                  <MasterRow key={m.id} master={m} onAction={init} />
+                ))}
+              </div>
+            )}
+
+            {tab === 'masters' && (
+              <div>
+                <div style={{ display:'flex', gap:12, marginBottom:20, flexWrap:'wrap' }}>
+                  <input value={search} onChange={e => setSearch(e.target.value)}
+                    placeholder={a.masters.searchPlaceholder}
+                    style={{ flex:1, minWidth:200, padding:'10px 14px', border:'1.5px solid #E2E5EA',
+                      borderRadius:10, fontFamily:'Outfit,sans-serif', fontSize:'.88rem', outline:'none' }} />
+                  <select value={verFilter} onChange={e => setVerFilter(e.target.value)} style={{
+                    padding:'10px 14px', border:'1.5px solid #E2E5EA', borderRadius:10,
+                    fontFamily:'Outfit,sans-serif', fontSize:'.88rem', outline:'none',
+                  }}>
+                    <option value="">{a.masters.allStatuses}</option>
+                    {(Object.entries(a.verStatus) as [string,string][]).map(([k,v]) => (
+                      <option key={k} value={k}>{v}</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+                  {loading ? (
+                    <div style={{ textAlign:'center', padding:'40px', color:'#9AA3AF' }}>{t.common.loading}</div>
+                  ) : masters.length === 0 ? (
+                    <div style={{ textAlign:'center', padding:'40px', color:'#9AA3AF' }}>{a.noResults}</div>
+                  ) : masters.map(m => <MasterRow key={m.id} master={m} onAction={init} />)}
+                </div>
+              </div>
+            )}
+
+            {tab === 'disputes' && (
+              <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+                {disputes.length === 0 ? (
+                  <div style={{ textAlign:'center', padding:'48px', color:'#9AA3AF' }}>
+                    <div style={{ fontSize:48, marginBottom:10 }}>🕊️</div>
+                    <p>{a.noDisputes}</p>
+                  </div>
+                ) : disputes.map(d => <DisputeRow key={d.id} dispute={d} onAction={init} />)}
+              </div>
+            )}
+
+            {tab === 'fraud' && (
+              <div>
+                <div style={{ background:'#FEF2F2', borderRadius:12, padding:'14px 16px', marginBottom:16,
+                  fontSize:'.85rem', color:'#991B1B', border:'1px solid #FECACA' }}>
+                  {a.fraud.warning}
+                </div>
+                <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+                  {fraud.length === 0 ? (
+                    <div style={{ textAlign:'center', padding:'40px', color:'#9AA3AF' }}>{a.fraud.none}</div>
+                  ) : fraud.map((log: any) => (
+                    <div key={log.id} style={{ background:'white', borderRadius:12, padding:'16px',
+                      border:'1.5px solid #FECACA' }}>
+                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12 }}>
+                        <div>
+                          <div style={{ fontWeight:700, color:'#991B1B', fontSize:'.9rem' }}>
+                            {log.user?.firstName} {log.user?.lastName} · {log.user?.role}
+                          </div>
+                          <div style={{ fontSize:'.78rem', color:'#6B7280', margin:'4px 0' }}>
+                            {new Date(log.createdAt).toLocaleString()}
+                          </div>
+                          <div style={{ fontSize:'.82rem', color:'#1A1A1A', marginTop:6 }}>
+                            {a.fraud.detected} <strong>{log.metadata?.reasons?.join(', ')}</strong>
+                            {' · '}{a.fraud.score} <strong style={{ color:'#DC2626' }}>{log.metadata?.score}</strong>
+                          </div>
+                        </div>
+                        <button onClick={async () => {
+                          await adminAPI.updateMaster(log.entityId || '', { action:'SUSPEND', note: a.fraud.fraudAttempt });
+                          toast.success(a.fraud.suspended);
+                          init();
+                        }} style={{
+                          background:'#991B1B', color:'white', border:'none',
+                          padding:'8px 16px', borderRadius:50, cursor:'pointer', fontSize:'.78rem', fontWeight:600,
+                        }}>{a.fraud.suspend}</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
-
-function Loading() {
-  return <div style={{ minHeight:'100vh', paddingTop:100, display:'flex', alignItems:'center', justifyContent:'center', color:'#6B7280' }}>Зареждане...</div>;
-}
-
-const sectionTitle: React.CSSProperties = { fontFamily:'Syne,sans-serif', fontWeight:700, fontSize:'1.05rem', color:'#1E3A5F', margin:'0 0 12px' };

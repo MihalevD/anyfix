@@ -53,7 +53,6 @@ export const authAPI = {
   logout:   ()              => api.post('/api/auth/logout'),
   verifyOtp:(data: any)     => api.post('/api/auth/verify-otp', data),
   refresh:  (token: string) => api.post('/api/auth/refresh', { refreshToken: token }),
-  verifyEmail: (token: string) => api.get(`/api/auth/verify-email?token=${token}`),
 };
 
 export const ordersAPI = {
